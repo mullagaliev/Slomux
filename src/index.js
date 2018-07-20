@@ -1,30 +1,51 @@
 import React from 'react';
 import ReactDOM from 'react-dom';
-
+import PropTypes from 'prop-types';
 // Slomux - реализация Flux, в которой, как следует из нвазвания, что-то сломано.
 // Нужно выяснить что здесь сломано
 
-const createStore = (reducer, initialState) => {
-  let currentState = initialState
-  const listeners = []
+const createStore = function (reducer, initialState = []) {
+  let currentState = initialState;
+  let listeners = [];
 
-  const getState = () => currentState
+  const getState = () => currentState;
   const dispatch = action => {
-    currentState = reducer(currentState, action)
-    listeners.forEach(listener => listener())
-  }
+    currentState = reducer(currentState, action);
+    listeners.forEach(listener => listener());
 
-  const subscribe = listener => listeners.push(listener)
+    return action;
+  };
 
-  return { getState, dispatch, subscribe }
-}
+  const subscribe = listener => {
+    listeners.push(listener);
+    // Функция для отписки
+    return () => {
+      const index = listeners.indexOf(listener);
+      if (index >= 0) {
+        listeners.splice(index, 1);
+      }
+    };
+  };
+
+  return {
+    getState,
+    dispatch,
+    subscribe
+  };
+};
 
 const connect = (mapStateToProps, mapDispatchToProps) =>
     Component => {
       return class extends React.Component {
+        static contextTypes = {
+          store: PropTypes.object
+        };
+
         render() {
+          const { store } = this.context;
           return (
               <Component
+                  {...this.props}
                   {...mapStateToProps(store.getState(), this.props)}
                   {...mapDispatchToProps(store.dispatch, this.props)}
               />
@@ -32,82 +53,119 @@ const connect = (mapStateToProps, mapDispatchToProps) =>
         }
 
         componentDidMount() {
-          store.subscribe(this.handleChange)
+          const { store } = this.context;
+          this.unsubscribe = store.subscribe(this.handleChange);
         }
 
-        handleChange = () => {
-          this.forceUpdate()
+        componentWillUnmount() {
+          this.unsubscribe()
         }
+
+        handleChange = () => this.forceUpdate()
       }
-    }
+    };
 
 class Provider extends React.Component {
+  static childContextTypes = {
+    store: PropTypes.object
+  };
+
   componentWillMount() {
-    window.store = this.props.store
+    window.store = this.props.store;
   }
 
+  getChildContext() {
+    return {
+      store: this.props.store
+    };
+  }
+
+
   render() {
-    return this.props.children
+    return React.Children.only(this.props.children);
   }
 }
 
 // APP
 
 // actions
-const ADD_TODO = 'ADD_TODO'
+const ADD_TODO = 'ADD_TODO';
 
 // action creators
 const addTodo = todo => ({
   type: ADD_TODO,
   payload: todo,
-})
+});
 
 // reducers
 const reducer = (state = [], action) => {
-  switch(action.type) {
+  switch (action.type) {
     case ADD_TODO:
-      state.push(action.payload)
-      return state
+      let newState = state.slice();
+      newState.push(action.payload);
+      return newState;
     default:
-      return state
+      return state;
   }
-}
+};
 
 // components
 class ToDoComponent extends React.Component {
   state = {
     todoText: ''
-  }
+  };
+
+  handleSubmit = (e) => {
+    e.preventDefault();
+    this.addTodo();
+  };
 
   render() {
+    const { title = 'Без названия', todos = [] } = this.props;
+    const { todoText = '' } = this.state;
     return (
-        <div>
-          <label>{this.props.title || 'Без названия'}</label>
+        <form onSubmit={this.handleSubmit}>
+          <label htmlFor="todoText">
+            {title}
+          </label>
           <div>
             <input
-                value={this.state.todoText}
+                id="todoText"
+                name="todoText"
+                value={todoText}
                 placeholder="Название задачи"
-                onChange={this.updateText}
+                onChange={this.handleInputChange}
             />
-            <button onClick={this.addTodo}>Добавить</button>
+            <button type='submit'>Добавить</button>
             <ul>
-              {this.props.todos.map((todo, idx) => <li>{todo}</li>)}
+              {Array.isArray(todos) && todos.map((todo, idx) => <li key={idx}>{todo}</li>)}
             </ul>
           </div>
-        </div>
+        </form>
     )
   }
 
-  updateText(e) {
-    const { value } = e.target
+  handleInputChange = (event) => {
+    const target = event.target;
+    const name = target.name;
 
-    this.state.todoText = value
-  }
+    this.setState({
+      [name]: target.value
+    });
+  };
 
-  addTodo() {
-    this.props.addTodo(this.state.todoText)
+  reset = () => {
+    this.setState({
+      todoText: ''
+    });
+  };
 
-    this.state.todoText = ''
+  addTodo = () => {
+    const { todoText = '' } = this.state;
+    if (todoText && todoText.trim()) {
+      this.props.addTodo(todoText);
+      this.reset();
+    }
   }
 }
 
@@ -115,12 +173,14 @@ const ToDo = connect(state => ({
   todos: state,
 }), dispatch => ({
   addTodo: text => dispatch(addTodo(text)),
-}))(ToDoComponent)
+}))(ToDoComponent);
 
 // init
+const store = createStore(reducer, []);
+
 ReactDOM.render(
-    <Provider store={createStore(reducer, [])}>
+    <Provider store={store}>
       <ToDo title="Список задач"/>
     </Provider>,
     document.getElementById('app')
-)
+);
